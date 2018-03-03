@@ -71,15 +71,15 @@ def main():
 		'caption_vector_length' : args.caption_vector_length
 	}
 
-	with tf.device('/gpu:0'):
-		gan = model.GAN(model_options)
-		input_tensors, variables, loss, outputs, checks = gan.build_model()
-		with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
-			d_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['d_loss'], var_list=variables['d_vars'])
-			g_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['g_loss'], var_list=variables['g_vars'])
+	#with tf.device('/gpu:0'):
+	gan = model.GAN(model_options)
+	input_tensors, variables, loss, outputs, checks = gan.build_model()
+	with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
+		d_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['d_loss'], var_list=variables['d_vars'])
+		g_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['g_loss'], var_list=variables['g_vars'])
 
-		sess = tf.InteractiveSession()
-		tf.initialize_all_variables().run()
+	sess = tf.InteractiveSession()
+	tf.initialize_all_variables().run()
 		
 	saver = tf.train.Saver()
 	if args.resume_model:
