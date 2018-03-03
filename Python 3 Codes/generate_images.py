@@ -5,7 +5,7 @@ import argparse
 import pickle
 from os.path import join
 import h5py
-from Utils import image_processing
+import image_processing
 import scipy.misc
 import random
 import json

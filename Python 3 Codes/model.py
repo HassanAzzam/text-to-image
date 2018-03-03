@@ -1,5 +1,5 @@
 import tensorflow as tf
-from Utils import ops
+import ops
 
 class GAN:
 	'''
