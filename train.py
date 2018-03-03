@@ -70,31 +70,29 @@ def main():
 		'gfc_dim' : args.gfc_dim,
 		'caption_vector_length' : args.caption_vector_length
 	}
-	
-	
-	gan = model.GAN(model_options)
-	input_tensors, variables, loss, outputs, checks = gan.build_model()
-	
-	with tf.variable_scope(tf.get_variable_scope(), reuse=False):
-		d_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['d_loss'], var_list=variables['d_vars'])
-		g_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['g_loss'], var_list=variables['g_vars'])
 
+	with tf.device('/gpu:0'):
+		gan = model.GAN(model_options)
+		input_tensors, variables, loss, outputs, checks = gan.build_model()
+		with tf.variable_scope(tf.get_variable_scope(), reuse=False):
+			d_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['d_loss'], var_list=variables['d_vars'])
+			g_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['g_loss'], var_list=variables['g_vars'])
 
-	sess = tf.InteractiveSession()
-	tf.initialize_all_variables().run()
-	
+		sess = tf.InteractiveSession()
+		tf.initialize_all_variables().run()
+		
 	saver = tf.train.Saver()
 	if args.resume_model:
 		saver.restore(sess, args.resume_model)
-	
+
 	loaded_data = load_training_data(args.data_dir, args.data_set)
-	
+
 	for i in range(args.epochs):
 		batch_no = 0
 		while batch_no*args.batch_size < loaded_data['data_length']:
-			real_images, wrong_images, caption_vectors, z_noise, image_files = get_training_batch(batch_no, args.batch_size, 
+			real_images, wrong_images, caption_vectors, z_noise, image_files = get_training_batch(batch_no, args.batch_size,
 				args.image_size, args.z_dim, args.caption_vector_length, 'train', args.data_dir, args.data_set, loaded_data)
-			
+
 			# DISCR UPDATE
 			check_ts = [ checks['d_loss1'] , checks['d_loss2'], checks['d_loss3']]
 			_, d_loss, gen, d1, d2, d3 = sess.run([d_optim, loss['d_loss'], outputs['generator']] + check_ts,
@@ -104,12 +102,12 @@ def main():
 					input_tensors['t_real_caption'] : caption_vectors,
 					input_tensors['t_z'] : z_noise,
 				})
-			
+
 			print "d1", d1
 			print "d2", d2
 			print "d3", d3
 			print "D", d_loss
-			
+
 			# GEN UPDATE
 			_, g_loss, gen = sess.run([g_optim, loss['g_loss'], outputs['generator']],
 				feed_dict = {
@@ -127,7 +125,7 @@ def main():
 					input_tensors['t_real_caption'] : caption_vectors,
 					input_tensors['t_z'] : z_noise,
 				})
-			
+
 			print "LOSSES", d_loss, g_loss, batch_no, i, len(loaded_data['image_list'])/ args.batch_size
 			batch_no += 1
 			if (batch_no % args.save_every) == 0:
@@ -149,13 +147,13 @@ def load_training_data(data_dir, data_set):
 		img_75 = int(len(image_list)*0.75)
 		training_image_list = image_list[0:img_75]
 		random.shuffle(training_image_list)
-		
+
 		return {
 			'image_list' : training_image_list,
 			'captions' : flower_captions,
 			'data_length' : len(training_image_list)
 		}
-	
+
 	else:
 		with open(join(data_dir, 'meta_train.pkl')) as f:
 			meta_data = pickle.load(f)
@@ -163,7 +161,7 @@ def load_training_data(data_dir, data_set):
 		return meta_data
 
 def save_for_vis(data_dir, real_images, generated_images, image_files):
-	
+
 	shutil.rmtree( join(data_dir, 'samples') )
 	os.makedirs( join(data_dir, 'samples') )
 
@@ -177,7 +175,7 @@ def save_for_vis(data_dir, real_images, generated_images, image_files):
 		scipy.misc.imsave(join(data_dir, 'samples/fake_image_{}.jpg'.format(i)), fake_images_255)
 
 
-def get_training_batch(batch_no, batch_size, image_size, z_dim, 
+def get_training_batch(batch_no, batch_size, image_size, z_dim,
 	caption_vector_length, split, data_dir, data_set, loaded_data = None):
 	if data_set == 'mscoco':
 		with h5py.File( join(data_dir, 'tvs/'+split + '_tvs_' + str(batch_no))) as hf:
@@ -188,14 +186,14 @@ def get_training_batch(batch_no, batch_size, image_size, z_dim,
 
 		real_images = np.zeros((batch_size, 64, 64, 3))
 		wrong_images = np.zeros((batch_size, 64, 64, 3))
-		
+
 		image_files = []
 		for idx, image_id in enumerate(image_ids):
 			image_file = join(data_dir, '%s2014/COCO_%s2014_%.12d.jpg'%(split, split, image_id) )
 			image_array = image_processing.load_image_array(image_file, image_size)
 			real_images[idx,:,:,:] = image_array
 			image_files.append(image_file)
-		
+
 		# TODO>> As of Now, wrong images are just shuffled real images.
 		first_image = real_images[0,:,:,:]
 		for i in range(0, batch_size):
@@ -221,7 +219,7 @@ def get_training_batch(batch_no, batch_size, image_size, z_dim,
 			image_file =  join(data_dir, 'flowers/jpg/'+loaded_data['image_list'][idx])
 			image_array = image_processing.load_image_array(image_file, image_size)
 			real_images[cnt,:,:,:] = image_array
-			
+
 			# Improve this selection of wrong image
 			wrong_image_id = random.randint(0,len(loaded_data['image_list'])-1)
 			wrong_image_file =  join(data_dir, 'flowers/jpg/'+loaded_data['image_list'][wrong_image_id])
