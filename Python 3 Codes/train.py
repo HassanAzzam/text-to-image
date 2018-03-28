@@ -5,12 +5,13 @@ import argparse
 import pickle
 from os.path import join
 import h5py
-from Utils import image_processing
+import image_processing
 import scipy.misc
 import random
 import json
 import os
 import shutil
+import matplotlib.pyplot as plt
 
 def main():
 	parser = argparse.ArgumentParser()
@@ -47,7 +48,7 @@ def main():
 	parser.add_argument('--beta1', type=float, default=0.5,
 					   help='Momentum for Adam Update')
 
-	parser.add_argument('--epochs', type=int, default=600,
+	parser.add_argument('--epochs', type=int, default=300,
 					   help='Max number of epochs')
 
 	parser.add_argument('--save_every', type=int, default=30,
@@ -56,7 +57,7 @@ def main():
 	parser.add_argument('--resume_model', type=str, default=None,
                        help='Pre-Trained Model Path, to resume from')
 
-	parser.add_argument('--data_set', type=str, default="flowers",
+	parser.add_argument('--data_set', type=str, default="faces",
                        help='Dat set: MS-COCO, flowers')
 
 	args = parser.parse_args()
@@ -70,23 +71,28 @@ def main():
 		'gfc_dim' : args.gfc_dim,
 		'caption_vector_length' : args.caption_vector_length
 	}
-	
-	
-	gan = model.GAN(model_options)
-	input_tensors, variables, loss, outputs, checks = gan.build_model()
-	
-	d_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['d_loss'], var_list=variables['d_vars'])
-	g_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['g_loss'], var_list=variables['g_vars'])
-	
-	sess = tf.InteractiveSession()
-	tf.initialize_all_variables().run()
-	
-	saver = tf.train.Saver()
+
+	config = tf.ConfigProto(allow_soft_placement=True)
+	sess = tf.InteractiveSession(config=config)
+	with tf.device('/device:GPU:0'):
+		gan = model.GAN(model_options)
+		input_tensors, variables, loss, outputs, checks = gan.build_model()
+
+		with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
+			d_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['d_loss'], var_list=variables['d_vars'])
+			g_optim = tf.train.AdamOptimizer(args.learning_rate, beta1 = args.beta1).minimize(loss['g_loss'], var_list=variables['g_vars'])
+
+		tf.initialize_all_variables().run()
+
+		saver = tf.train.Saver()
+
 	if args.resume_model:
 		saver.restore(sess, args.resume_model)
 	
 	loaded_data = load_training_data(args.data_dir, args.data_set)
-	
+
+	desc_plot = []
+	gen_plot = []
 	for i in range(args.epochs):
 		batch_no = 0
 		while batch_no*args.batch_size < loaded_data['data_length']:
@@ -125,7 +131,9 @@ def main():
 					input_tensors['t_real_caption'] : caption_vectors,
 					input_tensors['t_z'] : z_noise,
 				})
-			
+			desc_plot.append(d_loss)
+			gen_plot.append(g_loss)
+
 			print("LOSSES", d_loss, g_loss, batch_no, i, len(loaded_data['image_list'])/ args.batch_size)
 			batch_no += 1
 			if (batch_no % args.save_every) == 0:
@@ -134,9 +142,32 @@ def main():
 				save_path = saver.save(sess, "Data/Models/latest_model_{}_temp.ckpt".format(args.data_set))
 		if i%5 == 0:
 			save_path = saver.save(sess, "Data/Models/model_after_{}_epoch_{}.ckpt".format(args.data_set, i))
+			plt.plot(desc_plot)
+			plt.plot(gen_plot)
+			plt.title('Generator and Descriminaor losses in epoch ' + str(i))
+			plt.legend(['desc', 'gen'], loc='upper left')
+			plt.savefig('Data/plot')
+			plt.close()
 
 def load_training_data(data_dir, data_set):
-	if data_set == 'flowers':
+	if data_set == 'faces':
+		h = h5py.File(join(data_dir, 'celebA_captions.hdf5'))
+		faces_captions = {}
+		for ds in h.items():
+			faces_captions[ds[0]] = np.array(ds[1])
+		image_list = [key for key in faces_captions]
+		image_list.sort()
+
+		img_75 = int(len(image_list)*0.75)
+		training_image_list = image_list[0:img_75]
+		random.shuffle(training_image_list)
+
+		return {
+			'image_list' : training_image_list,
+			'captions' : faces_captions,
+			'data_length' : len(training_image_list)
+		}
+	elif data_set == 'flowers':
 		h = h5py.File(join(data_dir, 'flower_tv.hdf5'))
 		flower_captions = {}
 		for ds in h.items():
@@ -216,19 +247,48 @@ def get_training_batch(batch_no, batch_size, image_size, z_dim,
 		image_files = []
 		for i in range(batch_no * batch_size, batch_no * batch_size + batch_size):
 			idx = i % len(loaded_data['image_list'])
-			image_file =  join(data_dir, 'flowers/jpg/'+loaded_data['image_list'][idx])
+			image_file = join(data_dir, 'flowers/jpg/' + loaded_data['image_list'][idx])
 			image_array = image_processing.load_image_array(image_file, image_size)
-			real_images[cnt,:,:,:] = image_array
-			
-			# Improve this selection of wrong image
-			wrong_image_id = random.randint(0,len(loaded_data['image_list'])-1)
-			wrong_image_file =  join(data_dir, 'flowers/jpg/'+loaded_data['image_list'][wrong_image_id])
-			wrong_image_array = image_processing.load_image_array(wrong_image_file, image_size)
-			wrong_images[cnt, :,:,:] = wrong_image_array
+			real_images[cnt, :, :, :] = image_array
 
-			random_caption = random.randint(0,4)
-			captions[cnt,:] = loaded_data['captions'][ loaded_data['image_list'][idx] ][ random_caption ][0:caption_vector_length]
-			image_files.append( image_file )
+			# Improve this selection of wrong image
+			wrong_image_id = random.randint(0, len(loaded_data['image_list']) - 1)
+			wrong_image_file = join(data_dir, 'flowers/jpg/' + loaded_data['image_list'][wrong_image_id])
+			wrong_image_array = image_processing.load_image_array(wrong_image_file, image_size)
+			wrong_images[cnt, :, :, :] = wrong_image_array
+
+			random_caption = random.randint(0, 4)
+			captions[cnt, :] = loaded_data['captions'][loaded_data['image_list'][idx]][random_caption][
+							   0:caption_vector_length]
+			image_files.append(image_file)
+			cnt += 1
+
+		z_noise = np.random.uniform(-1, 1, [batch_size, z_dim])
+		return real_images, wrong_images, captions, z_noise, image_files
+
+	if data_set == 'faces':
+		real_images = np.zeros((batch_size, 64, 64, 3))
+		wrong_images = np.zeros((batch_size, 64, 64, 3))
+		captions = np.zeros((batch_size, caption_vector_length))
+
+		cnt = 0
+		image_files = []
+		for i in range(batch_no * batch_size, batch_no * batch_size + batch_size):
+			idx = i % len(loaded_data['image_list'])
+			image_file = join(data_dir, '2000_faces/' + loaded_data['image_list'][idx])
+			image_array = image_processing.load_image_array(image_file, image_size)
+			real_images[cnt, :, :, :] = image_array
+
+			# Improve this selection of wrong image
+			wrong_image_id = random.randint(0, len(loaded_data['image_list']) - 1)
+			wrong_image_file = join(data_dir, '2000_faces/' + loaded_data['image_list'][wrong_image_id])
+			wrong_image_array = image_processing.load_image_array(wrong_image_file, image_size)
+			wrong_images[cnt, :, :, :] = wrong_image_array
+
+			random_caption = random.randint(0, 4)
+			captions[cnt, :] = loaded_data['captions'][loaded_data['image_list'][idx]][random_caption][
+							   0:caption_vector_length]
+			image_files.append(image_file)
 			cnt += 1
 
 		z_noise = np.random.uniform(-1, 1, [batch_size, z_dim])
